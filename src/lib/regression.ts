@@ -6,8 +6,9 @@ let wasmInitPromise: Promise<unknown> | null = null;
 
 export async function ensureWasmLoaded(): Promise<void> {
     if (!wasmInitPromise) {
-        // Just point directly to the static public URL:
-        wasmInitPromise = init("/wasm_math_bg.wasm").catch((err) => {
+        wasmInitPromise = init({
+            module_or_path: new URL("wasm_math_bg.wasm", window.location.href)
+        }).catch((err) => {
             wasmInitPromise = null;
             throw err;
         });

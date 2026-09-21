@@ -42,8 +42,7 @@ jobs:
         run: |
           cd wasm-math && wasm-pack build --target web && cd ..
           bun install
-          bun build index.html --outdir dist
-          cp wasm-math/pkg/wasm_math_bg.wasm dist/
+          bun run build
 
       # 5. Upload & Deploy to GitHub Pages
       - name: Setup Pages

@@ -1,5 +1,5 @@
-import tailwind from "bun-plugin-tailwind";
-import { rm } from "node:fs/promises";
+import { rm, copyFile } from "node:fs/promises";
+import tailwind from "bun-plugin-tailwind"
 import path from "node:path";
 
 const outdir = path.join(process.cwd(), "dist");
@@ -8,17 +8,20 @@ await rm(outdir, { recursive: true, force: true });
 const entrypoints = [...new Bun.Glob("src/**/*.html").scanSync()];
 
 const result = await Bun.build({
-  entrypoints,
-  outdir,
-  plugins: [tailwind],
-  minify: true,
-  target: "browser",
-  sourcemap: "linked",
-  define: {
-    "process.env.NODE_ENV": JSON.stringify("production"),
-  },
+    entrypoints,
+    outdir,
+    minify: true,
+    target: "browser",
+    sourcemap: "linked",
+    define: {
+        "process.env.NODE_ENV": JSON.stringify("production"),
+    },
+    plugins: [tailwind]
 });
-
+await copyFile(
+    "./wasm-math/pkg/wasm_math_bg.wasm",
+    "./dist/wasm_math_bg.wasm"
+);
 for (const output of result.outputs) {
-  console.log(` ${path.relative(process.cwd(), output.path)}  ${(output.size / 1024).toFixed(1)} KB`);
+    console.log(` ${path.relative(process.cwd(), output.path)}  ${(output.size / 1024).toFixed(1)} KB`);
 }
