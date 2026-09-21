@@ -1,0 +1,59 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: ["master"] # Or master
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Check out code
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Setup Rust & wasm-pack
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+
+      # 3. Setup Bun
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      # 4. Build WASM & Frontend
+      - name: Build Project
+        run: |
+          cd wasm-math && wasm-pack build --target web && cd ..
+          bun install
+          bun build index.html --outdir dist
+          cp wasm-math/pkg/wasm_math_bg.wasm dist/
+
+      # 5. Upload & Deploy to GitHub Pages
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "./dist"
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
