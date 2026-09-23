@@ -1,63 +1,90 @@
-export class Point {
-    readonly x: number;
-    readonly y: number;
+abstract class CoordinateSystem<Brand extends string> {
+	// Phantom type: zero bytes at runtime (erased by compiler)
+	declare readonly __brand: Brand;
 
-    constructor(x: number, y: number) {
-        this.x = x;
-        this.y = y;
-    }
+	constructor(readonly x: number, readonly y: number) { }
 
-    add(other: Point): Point {
-        return new Point(this.x + other.x, this.y + other.y);
-    }
+	// Polymorphic 'this' guarantees p1.add(p2) returns a PixelPoint,
+	// while v1.add(v2) returns a MathVector!
+	add(other: this): this {
+		return new (this.constructor as new (x: number, y: number) => this)(
+			this.x + other.x,
+			this.y + other.y
+		);
+	}
 
-    multiply(scalar: number): Point {
-        return new Point(this.x * scalar, this.y * scalar);
-    }
+	subtract(other: this): this {
+		return new (this.constructor as new (x: number, y: number) => this)(
+			this.x - other.x,
+			this.y - other.y
+		);
+	}
 
-    subtract(other: Point): Point {
-        return this.add(other.multiply(-1));
-    }
+	multiply(scalar: number): this {
+		return new (this.constructor as new (x: number, y: number) => this)(
+			this.x * scalar,
+			this.y * scalar
+		);
+	}
 }
 
+// 2. Define as many distinct unit spaces as you want in 1 line:
+export class PixelPoint extends CoordinateSystem<"PixelPoint"> { }
+export class Vector extends CoordinateSystem<"Vector"> { }
 export class Camera {
-    readonly position: Point;
-    readonly zoom: number;
+	readonly position: PixelPoint;
+	readonly zoom: number;
 
-    constructor(position: Point, zoom: number) {
-        this.position = position;
-        this.zoom = zoom;
-    }
+	constructor(position: PixelPoint, zoom: number) {
+		this.position = position;
+		this.zoom = zoom;
+	}
 
-    withPosition(position: Point): Camera {
-        return new Camera(position, this.zoom);
-    }
+	withPosition(position: PixelPoint): Camera {
+		return new Camera(position, this.zoom);
+	}
 
-    withZoom(zoom: number): Camera {
-        return new Camera(this.position, zoom);
-    }
+	withZoom(zoom: number): Camera {
+		return new Camera(this.position, zoom);
+	}
 
-    screenToWorld(screenPoint: Point, viewportWidth: number, viewportHeight: number): Point {
-        const center = new Point(viewportWidth, viewportHeight).multiply(0.5);
-        return screenPoint.subtract(center).multiply(1 / this.zoom).add(this.position);
-    }
+	screenToWorld(screenPoint: PixelPoint, viewportWidth: number, viewportHeight: number): PixelPoint {
+		const center = new PixelPoint(viewportWidth, viewportHeight).multiply(0.5);
+		return screenPoint.subtract(center).multiply(1 / this.zoom).add(this.position);
+	}
 
-    worldToScreen(worldPoint: Point, viewportWidth: number, viewportHeight: number): Point {
-        const center = new Point(viewportWidth, viewportHeight).multiply(0.5);
-        return worldPoint.subtract(this.position).multiply(this.zoom).add(center);
-    }
+	worldToScreen(worldPoint: PixelPoint, viewportWidth: number, viewportHeight: number): PixelPoint {
+		const center = new PixelPoint(viewportWidth, viewportHeight).multiply(0.5);
+		return worldPoint.subtract(this.position).multiply(this.zoom).add(center);
+	}
 }
 
 export function clamp(value: number, min: number | null, max: number | null): number {
-    if (min !== null && value < min) return min;
-    if (max !== null && value > max) return max;
-    return value;
+	if (min !== null && value < min) return min;
+	if (max !== null && value > max) return max;
+	return value;
 }
 
-export function gridToWorldPoint(p: Point): Point {
-    return p.multiply(100);
+export function pixelToVector(p: PixelPoint, pixelsPerGridUnit: number): Vector {
+	const point1 = p.multiply(1 / pixelsPerGridUnit);
+	return new Vector(point1.x, -point1.y)
 }
 
-export function worldToGridPoint(p: Point): Point {
-    return p.multiply(1 / 100);
+export function vectorToPixel(p: Vector, pixelsPerGridUnit: number): PixelPoint {
+	const point1 = p.multiply(pixelsPerGridUnit);
+	return new PixelPoint(point1.x, -point1.y)
+}
+// Convert Math Line -> Pixel Line for Canvas rendering:
+export function mathLineToPixelLine(line: { m: number; b: number }, gridSize: number) {
+	return {
+		m: -line.m,                    // Slope is inverted because canvas Y is flipped
+		b: -line.b * gridSize,         // Intercept is inverted and scaled by gridSize
+	};
+}
+
+export function pixelLineToMathLine(line: { m: number; b: number }, gridSize: number) {
+	return {
+		m: -line.m,                    // Slope is inverted because canvas Y is flipped
+		b: -line.b / gridSize,         // Intercept is inverted and scaled by gridSize
+	};
 }

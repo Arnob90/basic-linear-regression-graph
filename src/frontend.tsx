@@ -8,12 +8,18 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { TooltipProvider } from "./components/ui/tooltip";
+import { SidebarProvider } from "./components/ui/sidebar";
 
 const elem = document.getElementById("root")!;
 const app = (
-  <StrictMode>
-    <App />
-  </StrictMode>
+	<StrictMode>
+		<TooltipProvider>
+			<SidebarProvider>
+				<App />
+			</SidebarProvider>
+		</TooltipProvider>
+	</StrictMode>
 );
 
 // https://bun.com/docs/bundler/hot-reloading#import-meta-hot-data

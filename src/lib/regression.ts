@@ -1,6 +1,6 @@
 // Adjust path to where your pkg folder is located
 import init, { least_squares, FitResult } from "../../wasm-math/pkg/wasm_math.js";
-import { Point } from "./types";
+import { Vector } from "./types";
 // Cache the initialization promise so it only runs once
 let wasmInitPromise: Promise<unknown> | null = null;
 
@@ -16,7 +16,7 @@ export async function ensureWasmLoaded(): Promise<void> {
     await wasmInitPromise;
 }
 
-export async function fitPoints(points: Point[]): Promise<{ m: number; b: number }> {
+export async function fitPoints(points: Vector[]): Promise<FitResult> {
     await ensureWasmLoaded();
 
     if (points.length < 2) {
@@ -32,8 +32,7 @@ export async function fitPoints(points: Point[]): Promise<{ m: number; b: number
 
     // 2. Call the Rust WASM function!
     try {
-        const result: FitResult = least_squares(flat);
-        return { m: result.m, b: result.b };
+        return least_squares(flat);
     } catch (err: unknown) {
         // Rust JsError arrives here as a standard Error
         if (err instanceof Error) {

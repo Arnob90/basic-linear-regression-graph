@@ -1,37 +1,39 @@
-import { Point, Camera, clamp } from './types';
+import { PixelPoint, Camera, clamp } from './types';
 import { useCameraStore, MIN_ZOOM, MAX_ZOOM } from './cameraStore';
+import type { Node, RenderContext } from './node';
+
+export interface CanvasEvents {
+    onCameraChange?: (camera: Camera) => void;
+    onPointerMove?: (world: PixelPoint, screen: PixelPoint) => void;
+    onDoubleClick?: (world: PixelPoint, screen: PixelPoint) => void;
+}
 
 export class InfiniteCanvas {
-    private canvas: HTMLCanvasElement;
-    private ctx: CanvasRenderingContext2D;
-
+    public canvas: HTMLCanvasElement;
+    public ctx: CanvasRenderingContext2D;
     private isDragging = false;
-    private dragStart: Point = new Point(0, 0);
+    private dragStart: PixelPoint = new PixelPoint(0, 0);
     private animationFrameId: number | null = null;
+    public children: Node[]
+    public camera: Camera
 
-    public readonly GRID_SIZE = 100;
-
-    constructor(canvas: HTMLCanvasElement) {
+    constructor(canvas: HTMLCanvasElement, private events: CanvasEvents = {}) {
         this.canvas = canvas;
+        this.children = []
+        this.camera = new Camera(new PixelPoint(0, 0), 1);
         const ctx = canvas.getContext('2d');
         if (!ctx) throw new Error('Could not get 2D context');
         this.ctx = ctx;
-
         this.initEvents();
         this.resize();
         this.render();
     }
 
-    // Convenience accessors that delegate to the Camera class
-    public get camera(): Camera {
-        return useCameraStore.getState().camera;
-    }
-
-    public screenToWorld(screenPoint: Point): Point {
+    public screenToWorld(screenPoint: PixelPoint): PixelPoint {
         return this.camera.screenToWorld(screenPoint, this.canvas.width, this.canvas.height);
     }
 
-    public worldToScreen(worldPoint: Point): Point {
+    public worldToScreen(worldPoint: PixelPoint): PixelPoint {
         return this.camera.worldToScreen(worldPoint, this.canvas.width, this.canvas.height);
     }
 
@@ -44,16 +46,12 @@ export class InfiniteCanvas {
         this.canvas.addEventListener("dblclick", this.onDoubleClick)
     }
     private onDoubleClick = (e: MouseEvent): void => {
-        // 1. Get exact pixel coordinates relative to the canvas
         const rect = this.canvas.getBoundingClientRect();
-        const screenX = e.clientX - rect.left;
-        const screenY = e.clientY - rect.top;
+        const screen = new PixelPoint(e.clientX - rect.left, e.clientY - rect.top);
+        const world = this.screenToWorld(screen);
 
-        // 2. Convert to world/math space!
-        const worldPoint = this.screenToWorld(new Point(screenX, screenY));
-
-        // 3. Add to Zustand store
-        useCameraStore.getState().addPoint(worldPoint);
+        // Let the outside world decide what double-click does!
+        this.events.onDoubleClick?.(world, screen);
     };
 
     private onResize = (): void => {
@@ -67,25 +65,28 @@ export class InfiniteCanvas {
 
     private onMouseDown = (e: MouseEvent): void => {
         this.isDragging = true;
-        this.dragStart = new Point(e.clientX, e.clientY);
+        this.dragStart = new PixelPoint(e.clientX, e.clientY);
     };
 
     private onMouseMove = (e: MouseEvent): void => {
-        const currentPos = new Point(e.clientX, e.clientY);
-        useCameraStore.getState().setMouseScreen(currentPos);
+        const screenPos = new PixelPoint(e.clientX, e.clientY);
+        const worldPos = this.screenToWorld(screenPos);
+
+        // 1. Always notify app of pointer movement:
+        this.events.onPointerMove?.(worldPos, screenPos);
+
         if (!this.isDragging) return;
 
-        const dragOffset = currentPos.subtract(this.dragStart);
-        const currentCamera = this.camera;
-
-        // Shift position by scaled drag delta
-        const newPosition = currentCamera.position.subtract(
-            dragOffset.multiply(1 / currentCamera.zoom)
+        // 2. Pan calculation:
+        const dragOffset = screenPos.subtract(this.dragStart);
+        const newPosition = this.camera.position.subtract(
+            dragOffset.multiply(1 / this.camera.zoom)
         );
+        this.camera = this.camera.withPosition(newPosition);
+        this.dragStart = screenPos;
 
-        // Update Zustand store
-        useCameraStore.getState().setCamera(currentCamera.withPosition(newPosition));
-        this.dragStart = currentPos;
+        // 3. Notify app of camera update:
+        this.events.onCameraChange?.(this.camera);
     };
 
     private onMouseUp = (): void => {
@@ -95,7 +96,7 @@ export class InfiniteCanvas {
     private onWheel = (e: WheelEvent): void => {
         e.preventDefault();
 
-        const mouseScreen = new Point(e.clientX, e.clientY);
+        const mouseScreen = new PixelPoint(e.clientX, e.clientY);
         const currentCamera = this.camera;
         // 1. World point before zoom
         const mouseWorld = currentCamera.screenToWorld(
@@ -113,89 +114,6 @@ export class InfiniteCanvas {
         const newCamera = tempCamera.withPosition(tempCamera.position.subtract(drift))
         useCameraStore.getState().setCamera(newCamera);
     };
-
-    private drawGrid(): void {
-        const { width, height } = this.canvas;
-        const camera = this.camera;
-
-        const topLeft = this.screenToWorld(new Point(0, 0));
-        const bottomRight = this.screenToWorld(new Point(width, height));
-
-        const startX = Math.floor(topLeft.x / this.GRID_SIZE) * this.GRID_SIZE;
-        const endX = Math.ceil(bottomRight.x / this.GRID_SIZE) * this.GRID_SIZE;
-        const startY = Math.floor(topLeft.y / this.GRID_SIZE) * this.GRID_SIZE;
-        const endY = Math.ceil(bottomRight.y / this.GRID_SIZE) * this.GRID_SIZE;
-
-        this.ctx.lineWidth = 1 / camera.zoom;
-        this.ctx.strokeStyle = '#e0e0e0';
-        this.ctx.beginPath();
-
-        for (let x = startX; x <= endX; x += this.GRID_SIZE) {
-            this.ctx.moveTo(x, topLeft.y);
-            this.ctx.lineTo(x, bottomRight.y);
-        }
-
-        for (let y = startY; y <= endY; y += this.GRID_SIZE) {
-            this.ctx.moveTo(topLeft.x, y);
-            this.ctx.lineTo(bottomRight.x, y);
-        }
-        this.ctx.stroke();
-
-        // Draw origin axes
-        this.ctx.strokeStyle = '#999999';
-        this.ctx.lineWidth = 2 / camera.zoom;
-        this.ctx.beginPath();
-        this.ctx.moveTo(0, topLeft.y);
-        this.ctx.lineTo(0, bottomRight.y);
-        this.ctx.moveTo(topLeft.x, 0);
-        this.ctx.lineTo(bottomRight.x, 0);
-        this.ctx.stroke();
-    }
-    private drawDataPoints(): void {
-        const points = useCameraStore.getState().points;
-        const zoom = this.camera.zoom;
-
-        this.ctx.fillStyle = "#2563eb"; // Blue
-        this.ctx.strokeStyle = "#ffffff";
-        this.ctx.lineWidth = 2 / zoom; // Keep 2px outline regardless of zoom
-
-        // Point radius: 6 screen pixels -> convert to world size
-        const radius = 6 / zoom;
-
-        for (const p of points) {
-            this.ctx.beginPath();
-            this.ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-            this.ctx.fill();
-            this.ctx.stroke();
-        }
-    }
-    public drawLine(m: number, b: number, color = "#ef4444"): void {
-        // 1. Find the visible horizontal world bounds
-        const topLeft = this.screenToWorld(new Point(0, 0));
-        const bottomRight = this.screenToWorld(new Point(this.canvas.width, this.canvas.height));
-
-        const minX = topLeft.x;
-        const maxX = bottomRight.x;
-
-        // 2. Compute the corresponding Y values using y = mx + b
-        const y1 = m * minX + b;
-        const y2 = m * maxX + b;
-
-        // 3. Draw the line
-        this.ctx.strokeStyle = color;
-        this.ctx.lineWidth = 2 / this.camera.zoom; // Always 2 screen pixels wide
-
-        this.ctx.beginPath();
-        this.ctx.moveTo(minX, y1);
-        this.ctx.lineTo(maxX, y2);
-        this.ctx.stroke();
-    }
-    private renderLines() {
-        const lines = useCameraStore.getState().lines
-        for (const line of lines) {
-            this.drawLine(line.m, line.b)
-        }
-    }
     private render = (): void => {
         const camera = this.camera;
 
@@ -208,11 +126,16 @@ export class InfiniteCanvas {
         this.ctx.translate(this.canvas.width / 2, this.canvas.height / 2);
         this.ctx.scale(camera.zoom, camera.zoom);
         this.ctx.translate(-camera.position.x, -camera.position.y);
-
-        this.drawGrid();
-        this.drawDataPoints();
-        this.renderLines()
-
+        const renderCtx = {
+            ctx: this.ctx,
+            canvas: this.canvas,
+            camera: this.camera,
+            screenToWorld: (p) => this.screenToWorld(p),
+            worldToScreen: (v) => this.worldToScreen(v),
+        } satisfies RenderContext;
+        for (const node of this.children) {
+            node.render(renderCtx);
+        }
         this.animationFrameId = requestAnimationFrame(this.render);
     };
 
