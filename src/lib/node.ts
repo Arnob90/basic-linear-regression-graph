@@ -7,6 +7,6 @@ export interface RenderContext {
     screenToWorld: (pixel: PixelPoint) => PixelPoint;
     worldToScreen: (math: PixelPoint) => PixelPoint;
 }
-export interface Node {
+export interface CanvasNode {
     render: (givenContext: RenderContext) => void;
 }

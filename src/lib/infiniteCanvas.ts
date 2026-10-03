@@ -1,29 +1,38 @@
 import { PixelPoint, Camera, clamp } from './types';
-import { useCameraStore, MIN_ZOOM, MAX_ZOOM } from './cameraStore';
-import type { Node, RenderContext } from './node';
+import { EventSignal } from './eventSignal.ts';
+import type { CanvasNode, RenderContext } from './node';
 
-export interface CanvasEvents {
-    onCameraChange?: (camera: Camera) => void;
-    onPointerMove?: (world: PixelPoint, screen: PixelPoint) => void;
-    onDoubleClick?: (world: PixelPoint, screen: PixelPoint) => void;
+export const MIN_ZOOM = 0.05;
+export const MAX_ZOOM = 20;
+
+export interface PointerEventPayload {
+    world: PixelPoint;
+    screen: PixelPoint;
 }
 
 export class InfiniteCanvas {
     public canvas: HTMLCanvasElement;
     public ctx: CanvasRenderingContext2D;
+    public camera: Camera;
+    public children: CanvasNode[] = [];
+
+    // --- Dedicated Event Signals (Composition) ---
+    public readonly pointerMove = new EventSignal<PointerEventPayload>();
+    public readonly cameraChange = new EventSignal<Camera>();
+    public readonly doubleClick = new EventSignal<PointerEventPayload>();
+
     private isDragging = false;
     private dragStart: PixelPoint = new PixelPoint(0, 0);
     private animationFrameId: number | null = null;
-    public children: Node[]
-    public camera: Camera
 
-    constructor(canvas: HTMLCanvasElement, private events: CanvasEvents = {}) {
+    constructor(canvas: HTMLCanvasElement, initialCamera?: Camera) {
         this.canvas = canvas;
-        this.children = []
-        this.camera = new Camera(new PixelPoint(0, 0), 1);
+        this.camera = initialCamera ?? new Camera(new PixelPoint(0, 0), 1);
+
         const ctx = canvas.getContext('2d');
         if (!ctx) throw new Error('Could not get 2D context');
         this.ctx = ctx;
+
         this.initEvents();
         this.resize();
         this.render();
@@ -43,15 +52,15 @@ export class InfiniteCanvas {
         window.addEventListener('mousemove', this.onMouseMove);
         window.addEventListener('mouseup', this.onMouseUp);
         this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
-        this.canvas.addEventListener("dblclick", this.onDoubleClick)
+        this.canvas.addEventListener('dblclick', this.onDoubleClick);
     }
+
     private onDoubleClick = (e: MouseEvent): void => {
         const rect = this.canvas.getBoundingClientRect();
         const screen = new PixelPoint(e.clientX - rect.left, e.clientY - rect.top);
         const world = this.screenToWorld(screen);
 
-        // Let the outside world decide what double-click does!
-        this.events.onDoubleClick?.(world, screen);
+        this.doubleClick.emit({ world, screen });
     };
 
     private onResize = (): void => {
@@ -72,21 +81,22 @@ export class InfiniteCanvas {
         const screenPos = new PixelPoint(e.clientX, e.clientY);
         const worldPos = this.screenToWorld(screenPos);
 
-        // 1. Always notify app of pointer movement:
-        this.events.onPointerMove?.(worldPos, screenPos);
+        // Always broadcast pointer position
+        this.pointerMove.emit({ world: worldPos, screen: screenPos });
 
         if (!this.isDragging) return;
 
-        // 2. Pan calculation:
+        // Pan calculation
         const dragOffset = screenPos.subtract(this.dragStart);
         const newPosition = this.camera.position.subtract(
             dragOffset.multiply(1 / this.camera.zoom)
         );
+
         this.camera = this.camera.withPosition(newPosition);
         this.dragStart = screenPos;
 
-        // 3. Notify app of camera update:
-        this.events.onCameraChange?.(this.camera);
+        // Notify subscribers that camera moved
+        this.cameraChange.emit(this.camera);
     };
 
     private onMouseUp = (): void => {
@@ -98,6 +108,7 @@ export class InfiniteCanvas {
 
         const mouseScreen = new PixelPoint(e.clientX, e.clientY);
         const currentCamera = this.camera;
+
         // 1. World point before zoom
         const mouseWorld = currentCamera.screenToWorld(
             mouseScreen,
@@ -105,19 +116,23 @@ export class InfiniteCanvas {
             this.canvas.height
         );
 
-        // 2. Calculate new zoom
+        // 2. Compute new zoom level
         const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
         const newZoom = clamp(currentCamera.zoom * zoomFactor, MIN_ZOOM, MAX_ZOOM);
-        const tempCamera = currentCamera.withZoom(newZoom)
-        const newMouseWorld = tempCamera.screenToWorld(mouseScreen, this.canvas.width, this.canvas.height)
-        const drift = newMouseWorld.subtract(mouseWorld)
-        const newCamera = tempCamera.withPosition(tempCamera.position.subtract(drift))
-        useCameraStore.getState().setCamera(newCamera);
+
+        const tempCamera = currentCamera.withZoom(newZoom);
+        const newMouseWorld = tempCamera.screenToWorld(mouseScreen, this.canvas.width, this.canvas.height);
+        const drift = newMouseWorld.subtract(mouseWorld);
+
+        // 3. Update internal camera and emit event
+        this.camera = tempCamera.withPosition(tempCamera.position.subtract(drift));
+        this.cameraChange.emit(this.camera);
     };
+
     private render = (): void => {
         const camera = this.camera;
 
-        // Reset & clear
+        // Reset transform & clear frame
         this.ctx.setTransform(1, 0, 0, 1, 0, 0);
         this.ctx.fillStyle = '#f8f9fa';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
@@ -126,6 +141,7 @@ export class InfiniteCanvas {
         this.ctx.translate(this.canvas.width / 2, this.canvas.height / 2);
         this.ctx.scale(camera.zoom, camera.zoom);
         this.ctx.translate(-camera.position.x, -camera.position.y);
+
         const renderCtx = {
             ctx: this.ctx,
             canvas: this.canvas,
@@ -133,9 +149,12 @@ export class InfiniteCanvas {
             screenToWorld: (p) => this.screenToWorld(p),
             worldToScreen: (v) => this.worldToScreen(v),
         } satisfies RenderContext;
+
+        // Draw children nodes in order
         for (const node of this.children) {
             node.render(renderCtx);
         }
+
         this.animationFrameId = requestAnimationFrame(this.render);
     };
 
@@ -143,11 +162,17 @@ export class InfiniteCanvas {
         if (this.animationFrameId !== null) {
             cancelAnimationFrame(this.animationFrameId);
         }
+
         window.removeEventListener('resize', this.onResize);
         this.canvas.removeEventListener('mousedown', this.onMouseDown);
         window.removeEventListener('mousemove', this.onMouseMove);
         window.removeEventListener('mouseup', this.onMouseUp);
         this.canvas.removeEventListener('wheel', this.onWheel);
         this.canvas.removeEventListener('dblclick', this.onDoubleClick);
+
+        // Clear all active subscriptions to prevent memory leaks
+        this.pointerMove.clear();
+        this.cameraChange.clear();
+        this.doubleClick.clear();
     }
 }

@@ -1,6 +1,6 @@
-import type { Node, RenderContext } from "./node";
+import type { CanvasNode, RenderContext } from "./node";
 import { PixelPoint } from "./types";
-export class Line implements Node {
+export class Line implements CanvasNode {
     public constructor(public m: number, public b: number, public color = "#ef4444") { }
     public render({ screenToWorld, ctx, canvas, camera }: RenderContext): void {
         const m = this.m;
